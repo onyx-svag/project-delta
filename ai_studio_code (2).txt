@@ -1,0 +1,845 @@
+--[=[
+    LUNEX HUB v5.5 - Реконструкция кода
+    Назначение: Автоматизация игрового процесса (вероятно, Kick Door Simulator или аналогичная игра).
+--]=]
+
+-- Сервисы Roblox
+local Players = game:GetService("Players")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local VirtualUser = game:GetService("VirtualUser")
+local RunService = game:GetService("RunService")
+local GuiService = game:GetService("GuiService")
+
+-- Локальный игрок
+local localPlayer = Players.LocalPlayer
+
+-- Конфигурация и состояние скрипта
+local state = {
+    running = false,
+    minimized = false,
+    flySpeed = 300,
+    bonusRunning = false,
+    antiAfkRunning = false,
+    roundCount = 0
+}
+
+-- Ключевые позиции на карте
+local POSITION_KICK = Vector3.new(690, 2.6, 229)
+local POSITION_WAIT = Vector3.new(657, -7.3, 204)
+local POSITION_SAFE = Vector3.new(706.28, 2.68, 229.8)
+
+-- Списки редкостей объектов для обнаружения волн
+local rarities = {
+    "Common", "Uncommon", "Rare", "Epic", "Legendary", 
+    "Mythic", "Godly", "Secret", "Rainbow", "Hacked", 
+    "Demon", "Celestial", "Divine", "Eternal"
+}
+
+-- Цветовая палитра интерфейса
+local colors = {
+    BG = Color3.fromRGB(12, 12, 16),
+    Card = Color3.fromRGB(24, 24, 32),
+    Accent = Color3.fromRGB(0, 255, 180),
+    Purple = Color3.fromRGB(180, 0, 255),
+    Red = Color3.fromRGB(220, 50, 70),
+    Green = Color3.fromRGB(40, 200, 100),
+    Text = Color3.fromRGB(255, 255, 255),
+    SubText = Color3.fromRGB(140, 140, 160),
+    Border = Color3.fromRGB(35, 35, 45)
+}
+
+-- ==========================================
+-- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+-- ==========================================
+
+-- Получение корневой части персонажа
+local function getRootPart()
+    local character = localPlayer.Character
+    if not character then return nil end
+    return character:FindFirstChild("HumanoidRootPart")
+end
+
+-- Симуляция клика по элементу интерфейса
+local function simulateClick(button)
+    if not button then return end
+    local x = button.AbsolutePosition.X + button.AbsoluteSize.X / 2
+    local y = button.AbsolutePosition.Y + button.AbsoluteSize.Y / 2
+    VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 0)
+    task.wait(0.05)
+    VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 0)
+end
+
+-- Перемещение персонажа к заданной позиции (Fly-мод)
+local function teleportTo(targetPosition, speed)
+    speed = speed or state.flySpeed
+    while state.running do
+        local root = getRootPart()
+        if not root then
+            task.wait(0.1)
+        else
+            local direction = targetPosition - root.Position
+            local distance = direction.Magnitude
+            if distance < 5 then
+                return
+            else
+                local step = direction.Unit * math.min(speed * 0.05, distance)
+                root.CFrame = root.CFrame + step
+                task.wait(0.05)
+            end
+        end
+    end
+end
+
+-- Поиск ближайшей цели (врага/объекта) по списку редкостей
+local function findNearestTarget()
+    local root = getRootPart()
+    if not root then return nil, 0 end
+
+    local nearest = nil
+    local minDistance = math.huge
+
+    for _, descendant in ipairs(workspace:GetDescendants()) do
+        if descendant:IsA("Model") then
+            for _, rarity in ipairs(rarities) do
+                if descendant.Name == rarity then
+                    local targetPart = descendant:FindFirstChild("HitboxPart") 
+                        or descendant:FindFirstChild("Root") 
+                        or descendant:FindFirstChild("RootPart")
+
+                    if targetPart then
+                        local distance = (root.Position - targetPart.Position).Magnitude
+                        if distance < minDistance then
+                            minDistance = distance
+                            nearest = targetPart
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return nearest, minDistance
+end
+
+-- Ожидание разморозки персонажа
+local function waitUnfreeze()
+    local startTime = tick()
+    while tick() - startTime < 10 do
+        if not state.running then return end
+        local root = getRootPart()
+        if root then
+            if root.Anchored then
+                -- Если персонаж заморожен, ждем разморозки
+                local freezeStart = tick()
+                while tick() - freezeStart < 45 do
+                    if not state.running then return end
+                    local currentRoot = getRootPart()
+                    if not currentRoot or not currentRoot.Anchored then
+                        task.wait(0.8)
+                        return
+                    end
+                    task.wait(0.1)
+                end
+            else
+                task.wait(0.1)
+            end
+        end
+    end
+end
+
+-- ==========================================
+-- СОЗДАНИЕ ИНТЕРФЕЙСА (UI)
+-- ==========================================
+
+local gui = Instance.new("ScreenGui", localPlayer.PlayerGui)
+gui.Name = "Lunex_HUB_v5"
+gui.ResetOnSpawn = false
+gui.DisplayOrder = 100
+
+-- Главное окно
+local mainFrame = Instance.new("Frame", gui)
+mainFrame.Size = UDim2.new(0, 500, 0, 370)
+mainFrame.Position = UDim2.new(0.5, -250, 0.4, -185)
+mainFrame.BackgroundColor3 = colors.BG
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Draggable = true
+Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 16)
+
+local mainStroke = Instance.new("UIStroke", mainFrame)
+mainStroke.Color = colors.Border
+mainStroke.Thickness = 1.5
+
+-- Декоративный градиент сверху
+local topBar = Instance.new("Frame", mainFrame)
+topBar.Size = UDim2.new(1, -32, 0, 4)
+topBar.Position = UDim2.new(0, 16, 0, 0)
+topBar.BackgroundColor3 = colors.Accent
+topBar.BorderSizePixel = 0
+Instance.new("UICorner", topBar).CornerRadius = UDim.new(0, 4)
+local gradient = Instance.new("UIGradient", topBar)
+gradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, colors.Accent),
+    ColorSequenceKeypoint.new(1, colors.Purple)
+})
+
+-- Заголовок
+local headerFrame = Instance.new("Frame", mainFrame)
+headerFrame.Size = UDim2.new(1, 0, 0, 58)
+headerFrame.Position = UDim2.new(0, 0, 0, 4)
+headerFrame.BackgroundTransparency = 1
+
+local titleLabel = Instance.new("TextLabel", headerFrame)
+titleLabel.Size = UDim2.new(0.6, 0, 1, 0)
+titleLabel.Position = UDim2.new(0, 18, 0, 0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "LUNEX <font color='#B400FF'>HUB</font> <font color='#555566'>v5</font>"
+titleLabel.RichText = true
+titleLabel.TextColor3 = colors.Text
+titleLabel.TextSize = 21
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+-- Кнопки управления окном (свернуть / закрыть)
+local function createHeaderButton(text, offset, color)
+    local btn = Instance.new("TextButton", headerFrame)
+    btn.Size = UDim2.new(0, 34, 0, 34)
+    btn.Position = UDim2.new(1, -offset, 0.5, -17)
+    btn.BackgroundColor3 = color
+    btn.Text = text
+    btn.TextColor3 = colors.Text
+    btn.TextSize = 20
+    btn.Font = Enum.Font.GothamBold
+    btn.BorderSizePixel = 0
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(1, 0)
+    return btn
+end
+
+local closeBtn = createHeaderButton("×", 48, colors.Red)
+local minimizeBtn = createHeaderButton("−", 90, Color3.fromRGB(55, 55, 70))
+
+local separator = Instance.new("Frame", mainFrame)
+separator.Size = UDim2.new(1, -36, 0, 1)
+separator.Position = UDim2.new(0, 18, 0, 62)
+separator.BackgroundColor3 = colors.Border
+separator.BorderSizePixel = 0
+
+-- Контейнер вкладок
+local tabsFrame = Instance.new("Frame", mainFrame)
+tabsFrame.Size = UDim2.new(1, -36, 0, 40)
+tabsFrame.Position = UDim2.new(0, 18, 0, 68)
+tabsFrame.BackgroundTransparency = 1
+
+local function createTabButton(name, xOffset, active)
+    local btn = Instance.new("TextButton", tabsFrame)
+    btn.Size = UDim2.new(0, 130, 1, 0)
+    btn.Position = UDim2.new(0, xOffset, 0, 0)
+    btn.BackgroundColor3 = active and colors.Card or Color3.fromRGB(16, 16, 22)
+    btn.Text = name
+    btn.TextColor3 = active and colors.Accent or colors.SubText
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 15
+    btn.BorderSizePixel = 0
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+    return btn
+end
+
+local tabMain = createTabButton("MAIN", 0, true)
+local tabHelper = createTabButton("HELPER", 136, false)
+local tabCredits = createTabButton("CREDITS", 272, false)
+
+-- Контейнеры страниц
+local pagesFrame = Instance.new("Frame", mainFrame)
+pagesFrame.Size = UDim2.new(1, -36, 1, -170)
+pagesFrame.Position = UDim2.new(0, 18, 0, 115)
+pagesFrame.BackgroundTransparency = 1
+
+local pageMain = Instance.new("Frame", pagesFrame)
+pageMain.Size = UDim2.new(1, 0, 1, 0)
+pageMain.BackgroundTransparency = 1
+
+local pageHelper = Instance.new("ScrollingFrame", pagesFrame)
+pageHelper.Size = UDim2.new(1, 0, 1, 0)
+pageHelper.BackgroundTransparency = 1
+pageHelper.Visible = false
+pageHelper.ScrollBarThickness = 2
+pageHelper.CanvasSize = UDim2.new(0, 0, 0, 360)
+pageHelper.BorderSizePixel = 0
+
+local pageCredits = Instance.new("Frame", pagesFrame)
+pageCredits.Size = UDim2.new(1, 0, 1, 0)
+pageCredits.BackgroundTransparency = 1
+pageCredits.Visible = false
+
+-- Универсальная функция создания кнопок управления функциями
+local function createActionButton(text, color, position, parent)
+    local btn = Instance.new("TextButton", parent or pageMain)
+    btn.Size = UDim2.new(0.48, 0, 0, 66)
+    btn.Position = position
+    btn.BackgroundColor3 = color
+    btn.Text = text
+    btn.TextColor3 = colors.Text
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 20
+    btn.BorderSizePixel = 0
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 10)
+    return btn
+end
+
+-- Элементы вкладки MAIN
+local startFarmBtn = createActionButton("▶  START", colors.Green, UDim2.new(0, 0, 0, 0))
+local stopFarmBtn = createActionButton("◼  STOP", colors.Red, UDim2.new(0.52, 0, 0, 0))
+
+local function createStatusRow(label, initialValue, yOffset)
+    local row = Instance.new("Frame", pageMain)
+    row.Size = UDim2.new(1, 0, 0, 36)
+    row.Position = UDim2.new(0, 0, 0, yOffset)
+    row.BackgroundColor3 = colors.Card
+    row.BorderSizePixel = 0
+    Instance.new("UICorner", row).CornerRadius = UDim.new(0, 8)
+
+    local lbl = Instance.new("TextLabel", row)
+    lbl.Size = UDim2.new(0.5, 0, 1, 0)
+    lbl.Position = UDim2.new(0, 12, 0, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = label
+    lbl.TextColor3 = colors.SubText
+    lbl.Font = Enum.Font.Gotham
+    lbl.TextSize = 13
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+
+    local val = Instance.new("TextLabel", row)
+    val.Size = UDim2.new(0.5, -12, 1, 0)
+    val.Position = UDim2.new(0.5, 0, 0, 0)
+    val.BackgroundTransparency = 1
+    val.Text = initialValue
+    val.TextColor3 = colors.Accent
+    val.Font = Enum.Font.GothamBold
+    val.TextSize = 13
+    val.TextXAlignment = Enum.TextXAlignment.Right
+
+    return val
+end
+
+createStatusRow("📍 KICK POS", "690, 2.6, 229", 76)
+createStatusRow("📍 WAIT POS", "657, -7.3, 204", 118)
+local roundsLabel = createStatusRow("🔄 Rounds Completed", "0", 160)
+
+-- Элементы вкладки HELPER
+local helperTitle1 = Instance.new("TextLabel", pageHelper)
+helperTitle1.Size = UDim2.new(1, 0, 0, 26)
+helperTitle1.BackgroundTransparency = 1
+helperTitle1.Text = "AUTO BONUS CLICKER"
+helperTitle1.TextColor3 = colors.Accent
+helperTitle1.Font = Enum.Font.GothamBold
+helperTitle1.TextSize = 16
+
+local helperDesc1 = Instance.new("TextLabel", pageHelper)
+helperDesc1.Size = UDim2.new(1, 0, 0, 36)
+helperDesc1.Position = UDim2.new(0, 0, 0, 28)
+helperDesc1.BackgroundTransparency = 1
+helperDesc1.Text = "Automatically triggers the Bonus button when holding the dumbbell item"
+helperDesc1.TextColor3 = colors.SubText
+helperDesc1.Font = Enum.Font.Gotham
+helperDesc1.TextSize = 13
+helperDesc1.TextWrapped = true
+
+local bonusStatusCard = Instance.new("Frame", pageHelper)
+bonusStatusCard.Size = UDim2.new(1, 0, 0, 36)
+bonusStatusCard.Position = UDim2.new(0, 0, 0, 70)
+bonusStatusCard.BackgroundColor3 = colors.Card
+bonusStatusCard.BorderSizePixel = 0
+Instance.new("UICorner", bonusStatusCard).CornerRadius = UDim.new(0, 8)
+
+local bonusStatusLabel = Instance.new("TextLabel", bonusStatusCard)
+bonusStatusLabel.Size = UDim2.new(1, -12, 1, 0)
+bonusStatusLabel.Position = UDim2.new(0, 12, 0, 0)
+bonusStatusLabel.BackgroundTransparency = 1
+bonusStatusLabel.Text = "Disabled"
+bonusStatusLabel.TextColor3 = colors.SubText
+bonusStatusLabel.Font = Enum.Font.GothamBold
+bonusStatusLabel.TextSize = 14
+bonusStatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local startBonusBtn = createActionButton("▶  ENABLE", colors.Green, UDim2.new(0, 0, 0, 116), pageHelper)
+local stopBonusBtn = createActionButton("◼  DISABLE", colors.Red, UDim2.new(0.52, 0, 0, 116), pageHelper)
+startBonusBtn.Size = UDim2.new(0.48, 0, 0, 46)
+stopBonusBtn.Size = UDim2.new(0.48, 0, 0, 46)
+
+local helperTitle2 = Instance.new("TextLabel", pageHelper)
+helperTitle2.Size = UDim2.new(1, 0, 0, 26)
+helperTitle2.Position = UDim2.new(0, 0, 0, 180)
+helperTitle2.BackgroundTransparency = 1
+helperTitle2.Text = "ANTI AFK JUMP"
+helperTitle2.TextColor3 = colors.Accent
+helperTitle2.Font = Enum.Font.GothamBold
+helperTitle2.TextSize = 16
+
+local helperDesc2 = Instance.new("TextLabel", pageHelper)
+helperDesc2.Size = UDim2.new(1, 0, 0, 36)
+helperDesc2.Position = UDim2.new(0, 0, 0, 208)
+helperDesc2.BackgroundTransparency = 1
+helperDesc2.Text = "Unequips item to slot [1], jumps every 2 minutes, and re-equips to bypass AFK kicks"
+helperDesc2.TextColor3 = colors.SubText
+helperDesc2.Font = Enum.Font.Gotham
+helperDesc2.TextSize = 13
+helperDesc2.TextWrapped = true
+
+local afkStatusCard = Instance.new("Frame", pageHelper)
+afkStatusCard.Size = UDim2.new(1, 0, 0, 36)
+afkStatusCard.Position = UDim2.new(0, 0, 0, 250)
+afkStatusCard.BackgroundColor3 = colors.Card
+afkStatusCard.BorderSizePixel = 0
+Instance.new("UICorner", afkStatusCard).CornerRadius = UDim.new(0, 8)
+
+local afkStatusLabel = Instance.new("TextLabel", afkStatusCard)
+afkStatusLabel.Size = UDim2.new(1, -12, 1, 0)
+afkStatusLabel.Position = UDim2.new(0, 12, 0, 0)
+afkStatusLabel.BackgroundTransparency = 1
+afkStatusLabel.Text = "Disabled"
+afkStatusLabel.TextColor3 = colors.SubText
+afkStatusLabel.Font = Enum.Font.GothamBold
+afkStatusLabel.TextSize = 14
+afkStatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local startAfkBtn = createActionButton("▶  ENABLE", colors.Green, UDim2.new(0, 0, 0, 296), pageHelper)
+local stopAfkBtn = createActionButton("◼  DISABLE", colors.Red, UDim2.new(0.52, 0, 0, 296), pageHelper)
+startAfkBtn.Size = UDim2.new(0.48, 0, 0, 46)
+stopAfkBtn.Size = UDim2.new(0.48, 0, 0, 46)
+
+-- Элементы вкладки CREDITS
+local creditsTitle = Instance.new("TextLabel", pageCredits)
+creditsTitle.Size = UDim2.new(1, 0, 0, 30)
+creditsTitle.BackgroundTransparency = 1
+creditsTitle.Text = "LUNEX HUB"
+creditsTitle.TextColor3 = colors.Text
+creditsTitle.Font = Enum.Font.GothamBold
+creditsTitle.TextSize = 18
+
+local creditsAuthor = Instance.new("TextLabel", pageCredits)
+creditsAuthor.Size = UDim2.new(1, 0, 0, 24)
+creditsAuthor.Position = UDim2.new(0, 0, 0, 34)
+creditsAuthor.BackgroundTransparency = 1
+creditsAuthor.Text = "Author: official2974821"
+creditsAuthor.TextColor3 = colors.SubText
+creditsAuthor.Font = Enum.Font.Gotham
+creditsAuthor.TextSize = 14
+
+local funpayBtn = Instance.new("TextButton", pageCredits)
+funpayBtn.Size = UDim2.new(1, 0, 0, 54)
+funpayBtn.Position = UDim2.new(0, 0, 0, 68)
+funpayBtn.BackgroundColor3 = colors.Purple
+funpayBtn.Text = "OPEN FUNPAY PROFILE"
+funpayBtn.TextColor3 = colors.Text
+funpayBtn.Font = Enum.Font.GothamBold
+funpayBtn.TextSize = 16
+funpayBtn.BorderSizePixel = 0
+Instance.new("UICorner", funpayBtn).CornerRadius = UDim.new(0, 10)
+
+-- Нижняя панель состояния (Status Bar)
+local statusBar = Instance.new("Frame", mainFrame)
+statusBar.Size = UDim2.new(1, -36, 0, 38)
+statusBar.Position = UDim2.new(0, 18, 1, -50)
+statusBar.BackgroundColor3 = colors.Card
+statusBar.BorderSizePixel = 0
+Instance.new("UICorner", statusBar).CornerRadius = UDim.new(0, 8)
+
+local statusStroke = Instance.new("UIStroke", statusBar)
+statusStroke.Color = colors.Border
+statusStroke.Thickness = 1
+
+local statusDot = Instance.new("Frame", statusBar)
+statusDot.Size = UDim2.new(0, 8, 0, 8)
+statusDot.Position = UDim2.new(0, 14, 0.5, -4)
+statusDot.BackgroundColor3 = colors.Accent
+statusDot.BorderSizePixel = 0
+Instance.new("UICorner", statusDot).CornerRadius = UDim.new(1, 0)
+
+local statusLabel = Instance.new("TextLabel", statusBar)
+statusLabel.Size = UDim2.new(1, -36, 1, 0)
+statusLabel.Position = UDim2.new(0, 32, 0, 0)
+statusLabel.BackgroundTransparency = 1
+statusLabel.Text = "READY"
+statusLabel.TextColor3 = colors.Accent
+statusLabel.Font = Enum.Font.GothamBold
+statusLabel.TextSize = 13
+statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local function updateStatus(text, color)
+    statusLabel.Text = text
+    statusLabel.TextColor3 = color or colors.Accent
+    statusDot.BackgroundColor3 = color or colors.Accent
+end
+
+-- Переключение вкладок
+local tabs = {
+    { button = tabMain, page = pageMain },
+    { button = tabHelper, page = pageHelper },
+    { button = tabCredits, page = pageCredits }
+}
+
+local function switchTab(targetPage, targetButton)
+    for _, tab in ipairs(tabs) do
+        tab.page.Visible = (tab.page == targetPage)
+        tab.button.TextColor3 = colors.SubText
+        tab.button.BackgroundColor3 = Color3.fromRGB(16, 16, 22)
+    end
+    targetButton.TextColor3 = colors.Accent
+    targetButton.BackgroundColor3 = colors.Card
+end
+
+tabMain.MouseButton1Click:Connect(function() switchTab(pageMain, tabMain) end)
+tabHelper.MouseButton1Click:Connect(function() switchTab(pageHelper, tabHelper) end)
+tabCredits.MouseButton1Click:Connect(function() switchTab(pageCredits, tabCredits) end)
+
+-- Логика сворачивания интерфейса
+minimizeBtn.MouseButton1Click:Connect(function()
+    state.minimized = not state.minimized
+    mainFrame.Size = state.minimized and UDim2.new(0, 500, 0, 62) or UDim2.new(0, 500, 0, 370)
+    pageMain.Parent.Visible = not state.minimized
+    tabsFrame.Visible = not state.minimized
+    separator.Visible = not state.minimized
+    statusBar.Visible = not state.minimized
+end)
+
+closeBtn.MouseButton1Click:Connect(function()
+    state.running = false
+    state.bonusRunning = false
+    state.antiAfkRunning = false
+    gui:Destroy()
+end)
+
+-- ==========================================
+-- ОСНОВНЫЕ РАБОЧИЕ ЦИКЛЫ (ЛОГИКА)
+-- ==========================================
+
+-- Главный цикл автофарма (MAIN AUTOFARM)
+local function startAutofarm()
+    updateStatus("STARTING IN 3s...", colors.SubText)
+    task.wait(3)
+
+    while state.running do
+        state.roundCount = state.roundCount + 1
+        roundsLabel.Text = tostring(state.roundCount)
+        
+        updateStatus("ROUND " .. state.roundCount .. " | MOVING", colors.Accent)
+        teleportTo(POSITION_KICK, 550)
+
+        if not state.running then
+            updateStatus("STOPPED", colors.Red)
+            return
+        end
+
+        task.wait(0.3)
+        
+        -- Поиск кнопки пинка ("KickButton")
+        local playerGui = localPlayer.PlayerGui
+        local hud = playerGui:FindFirstChild("HUD")
+        local kickBtn = nil
+
+        if hud then
+            kickBtn = hud:FindFirstChild("KickButton")
+        end
+
+        if not kickBtn then
+            -- Глубокий поиск, если кнопка не найдена по стандартному пути
+            for _, desc in ipairs(playerGui:GetDescendants()) do
+                if desc.Name == "KickButton" and desc:IsA("ImageButton") then
+                    kickBtn = desc
+                    break
+                end
+            end
+        end
+
+        if not kickBtn then
+            updateStatus("KICK BUTTON NOT FOUND!", colors.Red)
+            task.wait(1)
+        else
+            updateStatus("MOVING MOUSE & CLICKING...", colors.Accent)
+            
+            -- Вычисляем абсолютные координаты клика
+            local inset = GuiService:GetGuiInset()
+            local targetX = kickBtn.AbsolutePosition.X + kickBtn.AbsoluteSize.X / 2 + inset.X
+            local targetY = kickBtn.AbsolutePosition.Y + kickBtn.AbsoluteSize.Y / 2 + inset.Y
+
+            -- Эмулируем движение мыши и клик
+            if mousemoveabs then
+                mousemoveabs(targetX, targetY)
+                task.wait(0.05)
+                VirtualInputManager:SendMouseButtonEvent(targetX, targetY, 0, true, game, 0)
+                task.wait(0.05)
+                VirtualInputManager:SendMouseButtonEvent(targetX, targetY, 0, false, game, 0)
+                task.wait(0.1)
+
+                -- Логика решения мини-игры ("KickMinigame")
+                updateStatus("MINIGAME...", colors.Accent)
+                local movingBar = nil
+
+                for i = 1, 50 do
+                    if not state.running then break end
+                    local minigameGui = playerGui:FindFirstChild("KickMinigame")
+                    if minigameGui and minigameGui.Enabled then
+                        for _, desc in pairs(minigameGui:GetDescendants()) do
+                            if desc.Name == "MovingBar" and desc.Visible then
+                                movingBar = desc
+                                break
+                            end
+                        end
+                    end
+                    if movingBar then break end
+                    task.wait(0.1)
+                end
+
+                if movingBar then
+                    local timeout = tick() + 6
+                    local lastScale = 0
+
+                    while tick() < timeout and state.running and movingBar.Parent do
+                        local success, currentScale = pcall(function()
+                            return movingBar.Size.Y.Scale
+                        end)
+
+                        if success and currentScale then
+                            -- Пытаемся поймать идеальный тайминг (Sweet Spot >= 0.93)
+                            if currentScale > lastScale then
+                                lastScale = currentScale
+                                if currentScale >= 0.93 then
+                                    local viewport = workspace.CurrentCamera.ViewportSize
+                                    mousemoveabs(viewport.X / 2, viewport.Y / 2)
+                                    task.wait(0.02)
+                                    VirtualInputManager:SendMouseButtonEvent(viewport.X / 2, viewport.Y / 2, 0, true, game, 0)
+                                    task.wait(0.05)
+                                    VirtualInputManager:SendMouseButtonEvent(viewport.X / 2, viewport.Y / 2, 0, false, game, 0)
+                                    updateStatus("PERFECT! " .. math.floor(currentScale * 100) .. "%", colors.Green)
+                                    break
+                                end
+                            else
+                                -- Если шкала пошла на спад
+                                if lastScale >= 0.93 then
+                                    local viewport = workspace.CurrentCamera.ViewportSize
+                                    mousemoveabs(viewport.X / 2, viewport.Y / 2)
+                                    task.wait(0.02)
+                                    VirtualInputManager:SendMouseButtonEvent(viewport.X / 2, viewport.Y / 2, 0, true, game, 0)
+                                    task.wait(0.05)
+                                    VirtualInputManager:SendMouseButtonEvent(viewport.X / 2, viewport.Y / 2, 0, false, game, 0)
+                                    updateStatus("PERFECT! " .. math.floor(lastScale * 100) .. "%", colors.Green)
+                                    break
+                                end
+                                lastScale = currentScale
+                            end
+                        end
+                        task.wait(0.016)
+                    end
+                end
+
+                -- Ожидание завершения анимаций и разморозки
+                updateStatus("WAITING UNFREEZE...", colors.SubText)
+                waitUnfreeze()
+
+                if state.running then
+                    -- Возвращаемся на позицию ожидания
+                    updateStatus("RETURNING TO BASE", colors.Accent)
+                    teleportTo(POSITION_WAIT, state.flySpeed)
+
+                    if state.running then
+                        -- Сканируем окружение на появление новой волны
+                        updateStatus("WAITING WAVE...", colors.SubText)
+                        task.wait(5)
+                        local waveTimeout = tick() + 120
+                        local waveDetected = false
+
+                        while tick() < waveTimeout and state.running and not waveDetected do
+                            local target, distance = findNearestTarget()
+                            if target and distance <= 250 then
+                                waveDetected = true
+                                task.wait(0.2)
+                            end
+                            task.wait(0.1)
+                        end
+
+                        if waveDetected then
+                            updateStatus("WAVE! SAFE POS", colors.Green)
+                            teleportTo(POSITION_SAFE, 450)
+                            task.wait(1)
+                        else
+                            updateStatus("WAVE TIMEOUT", colors.Red)
+                        end
+                    end
+                end
+            else
+                -- Альтернативный метод перемещения мыши через относительные координаты
+                if mousemoverel then
+                    local mouse = localPlayer:GetMouse()
+                    mousemoverel(targetX - mouse.X, targetY - mouse.Y)
+                end
+            end
+        end
+    end
+end
+
+-- Автокликер бонусов (AUTO BONUS CLICKER)
+local function handleBonusActivation(bonusBtn)
+    if not bonusBtn or not bonusBtn.Visible then return end
+    
+    local success = pcall(function()
+        bonusBtn:Activate()
+    end)
+    
+    if not success then
+        simulateClick(bonusBtn)
+    end
+    
+    bonusStatusLabel.Text = "Clicked at " .. os.date("%H:%M:%S")
+    bonusStatusLabel.TextColor3 = colors.Accent
+end
+
+local function startBonusLoop()
+    bonusStatusLabel.Text = "Active, listening for button..."
+    bonusStatusLabel.TextColor3 = colors.SubText
+
+    -- Подключение к динамически появляющимся кнопкам
+    local connection = localPlayer.PlayerGui.DescendantAdded:Connect(function(descendant)
+        if state.bonusRunning and descendant.Name == "Bonus" then
+            if descendant:IsA("TextButton") or descendant:IsA("ImageButton") then
+                task.wait(0.15)
+                handleBonusActivation(descendant)
+                
+                -- Отслеживаем видимость
+                descendant:GetPropertyChangedSignal("Visible"):Connect(function()
+                    if descendant.Visible and state.bonusRunning then
+                        task.wait(0.1)
+                        handleBonusActivation(descendant)
+                    end
+                end)
+            end
+        end
+    end)
+
+    -- Постоянная проверка статических кнопок
+    while state.bonusRunning do
+        local upgrades = localPlayer.PlayerGui:FindFirstChild("KickUpgrades")
+        if upgrades then
+            local bonus = upgrades:FindFirstChild("Bonus")
+            if bonus and bonus:IsA("GuiObject") and bonus.Visible then
+                handleBonusActivation(bonus)
+                task.wait(0.5)
+            end
+        end
+        task.wait(0.1)
+    end
+
+    connection:Disconnect()
+    bonusStatusLabel.Text = "Disabled"
+    bonusStatusLabel.TextColor3 = colors.SubText
+end
+
+-- Обход AFK режима Roblox (ANTI-AFK)
+localPlayer.Idled:Connect(function()
+    if state.antiAfkRunning then
+        VirtualUser:Button2Down(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+        task.wait(1)
+        VirtualUser:Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+    end
+end)
+
+-- ==========================================
+-- СВЯЗЫВАНИЕ КНОПОК И ЦИКЛОВ
+-- ==========================================
+
+-- Кнопка Старта автофарма
+startFarmBtn.MouseButton1Click:Connect(function()
+    if not state.running then
+        state.running = true
+        state.roundCount = 0
+        startFarmBtn.BackgroundColor3 = Color3.fromRGB(25, 120, 55)
+        task.spawn(startAutofarm)
+    end
+end)
+
+-- Кнопка Остановки автофарма
+stopFarmBtn.MouseButton1Click:Connect(function()
+    state.running = false
+    startFarmBtn.BackgroundColor3 = colors.Green
+    updateStatus("READY", colors.Accent)
+end)
+
+-- Кнопка Включения автокликера бонусов
+startBonusBtn.MouseButton1Click:Connect(function()
+    if not state.bonusRunning then
+        state.bonusRunning = true
+        startBonusBtn.BackgroundColor3 = Color3.fromRGB(25, 120, 55)
+        task.spawn(startBonusLoop)
+    end
+end)
+
+-- Кнопка Выключения автокликера бонусов
+stopBonusBtn.MouseButton1Click:Connect(function()
+    state.bonusRunning = false
+    startBonusBtn.BackgroundColor3 = colors.Green
+end)
+
+-- Кнопка Включения Anti-AFK
+startAfkBtn.MouseButton1Click:Connect(function()
+    if not state.antiAfkRunning then
+        state.antiAfkRunning = true
+        startAfkBtn.BackgroundColor3 = Color3.fromRGB(25, 120, 55)
+        
+        task.spawn(function()
+            afkStatusLabel.Text = "Active (Looping 2 min)"
+            afkStatusLabel.TextColor3 = colors.Accent
+
+            while state.antiAfkRunning do
+                for second = 1, 120 do
+                    if not state.antiAfkRunning then break end
+                    task.wait(1)
+                end
+
+                if not state.antiAfkRunning then break end
+
+                local root = getRootPart()
+                local char = localPlayer.Character
+                
+                if root and char then
+                    afkStatusLabel.Text = "Jumping! " .. os.date("%H:%M:%S")
+                    
+                    -- Снимаем экипировку (выбор слота 1), прыгаем и надеваем обратно
+                    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.One, false, game)
+                    task.wait(0.15)
+                    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.One, false, game)
+                    task.wait(1.5)
+
+                    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+                    task.wait(0.1)
+                    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+                    task.wait(0.5)
+
+                    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.One, false, game)
+                    task.wait(0.15)
+                    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.One, false, game)
+
+                    afkStatusLabel.Text = "Active (Looping 2 min)"
+                    afkStatusLabel.TextColor3 = colors.Accent
+                end
+            end
+
+            afkStatusLabel.Text = "Disabled"
+            afkStatusLabel.TextColor3 = colors.SubText
+        end)
+    end
+end)
+
+-- Кнопка Выключения Anti-AFK
+stopAfkBtn.MouseButton1Click:Connect(function()
+    state.antiAfkRunning = false
+    startAfkBtn.BackgroundColor3 = colors.Green
+end)
+
+-- Скопировать ссылку на FunPay профиль
+funpayBtn.MouseButton1Click:Connect(function()
+    setclipboard("https://funpay.com/users/12678471/")
+    funpayBtn.Text = "COPIED TO CLIPBOARD!"
+    task.wait(2)
+    funpayBtn.Text = "OPEN FUNPAY PROFILE"
+end)
+
+-- Сообщение об успешной загрузке
+print("[LUNEX HUB] v5.5 loaded successfully.")
