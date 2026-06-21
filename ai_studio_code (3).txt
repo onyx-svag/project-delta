@@ -1,0 +1,1104 @@
+-- Сервисы Roblox
+local Players = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local MarketplaceService = game:GetService("MarketplaceService")
+local UserInputService = game:GetService("UserInputService")
+local Lighting = game:GetService("Lighting")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local localPlayer = Players.LocalPlayer
+
+-- Импорт внешних библиотек интерфейса и игрового модуля
+local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
+local ZombieArenaModule = loadstring(game:HttpGet("https://raw.githubusercontent.com/tylerdurden223/papi/main/SurviveZombieArenaModule"))()
+
+local waveRemotes = ReplicatedStorage:FindFirstChild("WaveRemotes")
+local zombieRemotes = ReplicatedStorage:FindFirstChild("ZombieRemotes")
+
+-- Таблицы для хранения состояний элементов управления
+local toggles = {}
+local options = {}
+
+local function registerToggle(name, defaultValue)
+    local item = { Value = defaultValue or false }
+    item.Set = function(self, val)
+        self.Value = val
+        if self._windElem then
+            self._windElem:Set(val)
+        end
+    end
+    toggles[name] = item
+    return item
+end
+
+local function registerOption(name, defaultValue)
+    local item = { Value = defaultValue }
+    options[name] = item
+    return item
+end
+
+-- Регистрация параметров функций автоматизации
+registerToggle("AutoKill", false)
+registerToggle("InstaKill", false)
+registerToggle("ZombieESP", false)
+registerToggle("AutoBuyGear", false)
+registerToggle("InvisEnabled", false)
+registerToggle("AutoWeaponUpgrade", false)
+registerToggle("AutoHealthUpgrade", false)
+registerToggle("AutoSkipWave", false)
+registerToggle("AutoDoubleCredits", false)
+registerToggle("AntiAFK", false)
+registerToggle("Noclip", false)
+registerToggle("EnableFly", false)
+registerToggle("InfiniteJump", false)
+registerToggle("Fullbright", false)
+registerToggle("AutoCollectShards", false)
+
+registerOption("AutoKillDelay", 0.1)
+registerOption("InstaKillDamage", 999999999)
+registerOption("InstaKillDelay", 0.1)
+registerOption("ESPColor", "Red")
+registerOption("GearBuySelect", { "Landmine" })
+registerOption("GearBuyDelay", 0.5)
+registerOption("InvisTransparency", 0)
+registerOption("WeaponUpgradeDelay", 0.5)
+registerOption("HealthUpgradeDelay", 0.5)
+registerOption("WalkSpeed", 16)
+registerOption("FlyHeight", 0)
+registerOption("JumpPower", 7.2)
+registerOption("TargetPriority", "Closest")
+registerOption("AutoKillRadius", 60)
+registerOption("ZombieTypeFilter", {})
+registerOption("ESPMaxDistance", 200)
+
+-- Инициализация игрового модуля
+ZombieArenaModule.init(toggles, options)
+
+-- Сохранение оригинальных параметров освещения
+local originalLighting = {
+    Brightness = Lighting.Brightness,
+    Ambient = Lighting.Ambient,
+    OutdoorAmbient = Lighting.OutdoorAmbient,
+    FogEnd = Lighting.FogEnd,
+    ClockTime = Lighting.ClockTime
+}
+
+-- Функция очистки эффектов при выгрузке меню
+local function cleanEffectsAndCheat()
+    pcall(function()
+        local zombiesLocal = workspace:FindFirstChild("Zombies_Local")
+        if zombiesLocal then
+            for _, zombie in ipairs(zombiesLocal:GetChildren()) do
+                local hl = zombie:FindFirstChildOfClass("Highlight")
+                if hl then hl:Destroy() end
+            end
+        end
+    end)
+    pcall(function()
+        local char = localPlayer.Character
+        if char then
+            local root = char:FindFirstChild("HumanoidRootPart")
+            if root then
+                local bv = root:FindFirstChildOfClass("BodyVelocity")
+                if bv then bv:Destroy() end
+            end
+        end
+    end)
+    pcall(function()
+        local chair = workspace:FindFirstChild("invischair")
+        if chair then chair:Destroy() end
+        local char = localPlayer.Character
+        if char then
+            for _, part in pairs(char:GetDescendants()) do
+                if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+                    part.Transparency = 0
+                end
+            end
+        end
+    end)
+    pcall(function()
+        local char = localPlayer.Character
+        if char then
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.CanCollide = true
+                end
+            end
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then
+                hum.WalkSpeed = 16
+                hum.JumpHeight = 7.2
+            end
+        end
+    end)
+    pcall(function()
+        Lighting.Brightness = originalLighting.Brightness
+        Lighting.Ambient = originalLighting.Ambient
+        Lighting.OutdoorAmbient = originalLighting.OutdoorAmbient
+        Lighting.FogEnd = originalLighting.FogEnd
+        Lighting.ClockTime = originalLighting.ClockTime
+    end)
+end
+
+-- Событие респавна персонажа
+localPlayer.CharacterAdded:Connect(function(char)
+    local hum = char:WaitForChild("Humanoid", 5)
+    if hum then
+        task.wait(0.1)
+        if options.JumpPower.Value ~= 7.2 then
+            hum.JumpHeight = options.JumpPower.Value
+        end
+        if options.WalkSpeed.Value ~= 16 then
+            hum.WalkSpeed = options.WalkSpeed.Value
+        end
+    end
+end)
+
+-- Бесконечный прыжок
+UserInputService.JumpRequest:Connect(function()
+    if toggles.InfiniteJump.Value then
+        local char = localPlayer.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum:ChangeState(Enum.HumanoidStateType.Jumping)
+        end
+    end
+end)
+
+-- Быстрый бинд невидимости
+local invisToggleKey = Enum.KeyCode.Z
+UserInputService.InputBegan:Connect(function(input, processed)
+    if not processed and input.KeyCode == invisToggleKey then
+        toggles.InvisEnabled:Set(not toggles.InvisEnabled.Value)
+    end
+end)
+
+-- Расчет текущего значения кадров в секунду (FPS)
+local fpsBuffer = {}
+RunService.Heartbeat:Connect(function(dt)
+    table.insert(fpsBuffer, 1 / dt)
+    if #fpsBuffer > 30 then
+        table.remove(fpsBuffer, 1)
+    end
+end)
+
+local function getAverageFPS()
+    if #fpsBuffer == 0 then return 0 end
+    local total = 0
+    for _, fps in ipairs(fpsBuffer) do
+        total = total + fps
+    end
+    return math.floor(total / #fpsBuffer)
+end
+
+-- Функция считывания текущей волны
+local function getCurrentWave()
+    local wave = workspace:GetAttribute("CurrentWave")
+    return wave and tostring(wave) or "--"
+end
+
+-- Оформление и создание графического интерфейса
+local Theme = WindUI:AddTheme({
+    Name = "NEOX",
+    Background = Color3.fromHex("#0f0f1a"),
+    Dialog = Color3.fromHex("#161624"),
+    Accent = Color3.fromHex("#7c3aed"),
+    Outline = Color3.fromHex("#7c3aed"),
+    Button = Color3.fromHex("#3b2f6e"),
+    Text = Color3.fromHex("#f0eeff"),
+    Placeholder = Color3.fromHex("#9d8ec7"),
+    Icon = Color3.fromHex("#c4b5fd"),
+    Slider = Color3.fromHex("#7c3aed")
+})
+
+local Window = WindUI:CreateWindow({
+    Title = "NEOX HUB | Survive Zombie Arena",
+    Icon = "rbxthumb://type=Asset&id=80622869023191&w=150&h=150",
+    Author = "by hassanxzayn",
+    Folder = "NEOX HUB",
+    Size = UDim2.fromOffset(600, 450),
+    Theme = "NEOX",
+    KeySystem = false
+})
+Window:SetToggleKey(Enum.KeyCode.Q)
+Window:OnDestroy(cleanEffectsAndCheat)
+
+WindUI:SetNotificationLower(true)
+WindUI:Notify({
+    Title = "NEOX HUB | Survive Zombie Arena",
+    Content = "Loaded Successfully!",
+    Duration = 5,
+    Image = "square-check-big"
+})
+
+-- Добавление вкладок в меню
+local tabHome = Window:Tab({ Title = "Home", Icon = "house" })
+local tabCombat = Window:Tab({ Title = "Combat", Icon = "sword" })
+local tabESP = Window:Tab({ Title = "ESP", Icon = "eye" })
+local tabGears = Window:Tab({ Title = "Gears", Icon = "box" })
+local tabImmortal = Window:Tab({ Title = "Immortal", Icon = "shield" })
+local tabUpgrades = Window:Tab({ Title = "Upgrades", Icon = "zap" })
+local tabWave = Window:Tab({ Title = "Wave", Icon = "waves" })
+local tabMisc = Window:Tab({ Title = "Misc", Icon = "map-pin" })
+local tabQueue = Window:Tab({ Title = "Queue", Icon = "users" })
+local tabInfo = Window:Tab({ Title = "Info", Icon = "info" })
+local tabConfig = Window:Tab({ Title = "Config", Icon = "save" })
+
+tabHome:Select()
+
+-- Наполнение вкладки "Home"
+tabHome:Paragraph({
+    Title = "Update Log",
+    Desc = "• Shifted To New Module\n• Added Custom NEOX Theme\n• Added New Features (Shards, Player ESP, Tier Kill)",
+    Image = "rbxthumb://type=Asset&id=80622869023191&w=150&h=150",
+    ImageSize = 60,
+    BackgroundColor = Color3.fromRGB(0, 0, 0)
+})
+tabHome:Divider()
+tabHome:Section({ Title = "Community" })
+tabHome:Button({
+    Title = "Copy Discord Invite",
+    Callback = function()
+        setclipboard("https://discord.com/invite/6yTDGMPDCp")
+        WindUI:Notify({ Title = "Copied!", Content = "Discord invite copied to clipboard.", Duration = 3 })
+    end
+})
+
+-- Наполнение вкладки "Combat"
+tabCombat:Section({ Title = "Kill" })
+toggles.AutoKill._windElem = tabCombat:Toggle({
+    Title = "Automatic Shooting",
+    Value = false,
+    Callback = function(val)
+        toggles.AutoKill.Value = val
+        if val then
+            if toggles.InstaKill.Value then toggles.InstaKill:Set(false) end
+            ZombieArenaModule.startAutoKill()
+        else
+            ZombieArenaModule.stopAutoKill()
+        end
+    end
+})
+
+tabCombat:Slider({
+    Title = "Auto-Shot Delay (s)",
+    Step = 0.01,
+    Value = { Min = 0, Max = 2, Default = 0.1 },
+    Callback = function(val)
+        options.AutoKillDelay.Value = val
+    end
+})
+
+toggles.InstaKill._windElem = tabCombat:Toggle({
+    Title = "Kill Instantly",
+    Value = false,
+    Callback = function(val)
+        toggles.InstaKill.Value = val
+        if val then
+            if toggles.AutoKill.Value then toggles.AutoKill:Set(false) end
+            ZombieArenaModule.startInstaKill()
+        else
+            ZombieArenaModule.stopInstaKill()
+        end
+    end
+})
+
+tabCombat:Slider({
+    Title = "Damage",
+    Step = 1000,
+    Value = { Min = 1000, Max = 999999999, Default = 999999999 },
+    Callback = function(val)
+        options.InstaKillDamage.Value = val
+    end
+})
+
+tabCombat:Slider({
+    Title = "Kill Delay (s)",
+    Step = 0.01,
+    Value = { Min = 0, Max = 2, Default = 0.1 },
+    Callback = function(val)
+        options.InstaKillDelay.Value = val
+    end
+})
+
+tabCombat:Button({
+    Title = "Kill All",
+    Callback = function()
+        ZombieArenaModule.killAll()
+    end
+})
+
+tabCombat:Section({ Title = "Targeting" })
+tabCombat:Dropdown({
+    Title = "Target Priority",
+    Values = { "Closest", "Highest HP", "Lowest HP" },
+    Value = "Closest",
+    Multi = false,
+    Callback = function(val)
+        options.TargetPriority.Value = val
+    end
+})
+
+tabCombat:Slider({
+    Title = "Auto-Kill Radius (studs)",
+    Step = 5,
+    Value = { Min = 10, Max = 200, Default = 60 },
+    Callback = function(val)
+        options.AutoKillRadius.Value = val
+    end
+})
+
+local zombieTiers = { "Walker", "Runner", "Decayed", "Brute", "Ashwalker", "Shade", "Volatile", "Howler", "Electro" }
+tabCombat:Dropdown({
+    Title = "Zombie Type Filter",
+    Values = zombieTiers,
+    Value = {},
+    Multi = true,
+    AllowNone = true,
+    Callback = function(val)
+        options.ZombieTypeFilter.Value = val
+    end
+})
+
+options._KillTierTarget = "Brute"
+tabCombat:Dropdown({
+    Title = "Kill All of Tier",
+    Values = zombieTiers,
+    Value = "Brute",
+    Multi = false,
+    Callback = function(val)
+        options._KillTierTarget = val
+    end
+})
+
+tabCombat:Button({
+    Title = "Kill All of Selected Tier",
+    Callback = function()
+        local targetTier = options._KillTierTarget or "Brute"
+        local zombiesList = workspace:FindFirstChild("Zombies_Local")
+        if zombiesList then
+            for _, zombie in ipairs(zombiesList:GetChildren()) do
+                pcall(function()
+                    local isTier = zombie:GetAttribute("Tier") == targetTier or zombie.Name:find(targetTier)
+                    if isTier and zombieRemotes and zombieRemotes:FindFirstChild("ZombieDamage") then
+                        zombieRemotes.ZombieDamage:FireServer(tonumber(zombie.Name:match("%d+")) or 0, 999999999)
+                    end
+                end)
+            end
+        end
+    end
+})
+
+-- Наполнение вкладки "ESP"
+tabESP:Section({ Title = "Zombie ESP" })
+toggles.ZombieESP._windElem = tabESP:Toggle({
+    Title = "Zombie Highlights",
+    Value = false,
+    Callback = function(val)
+        toggles.ZombieESP.Value = val
+        if not val then
+            ZombieArenaModule.clearESP()
+        end
+    end
+})
+
+tabESP:Dropdown({
+    Title = "ESP Color",
+    Values = { "Red", "Orange", "Yellow", "Purple" },
+    Value = "Red",
+    Multi = false,
+    Callback = function(val)
+        options.ESPColor.Value = val
+        local selectedColor = ZombieArenaModule.ESP_COLORS and ZombieArenaModule.ESP_COLORS[val]
+        if selectedColor then
+            ZombieArenaModule.applyESPColor(selectedColor)
+        end
+    end
+})
+
+local espLabelsConnections = {}
+tabESP:Toggle({
+    Title = "Health % on Labels",
+    Value = false,
+    Callback = function(val)
+        if val then
+            table.insert(espLabelsConnections, RunService.Heartbeat:Connect(function()
+                local zombiesLocal = workspace:FindFirstChild("Zombies_Local")
+                if zombiesLocal then
+                    for _, zombie in ipairs(zombiesLocal:GetChildren()) do
+                        pcall(function()
+                            local root = zombie:FindFirstChild("HumanoidRootPart")
+                            local hum = zombie:FindFirstChildOfClass("Humanoid")
+                            local healthBar = root and root:FindFirstChild("HealthBar")
+                            if healthBar and hum then
+                                local label = healthBar:FindFirstChild("Label")
+                                if label then
+                                    local nameClean = zombie.Name:match("_(.+)$") or "Zombie"
+                                    label.Text = nameClean .. " | " .. math.floor(hum.Health / hum.MaxHealth * 100) .. "%"
+                                end
+                            end
+                        end)
+                    end
+                end
+            end))
+        else
+            for _, conn in ipairs(espLabelsConnections) do
+                conn:Disconnect()
+            end
+            espLabelsConnections = {}
+            pcall(function()
+                local zombiesLocal = workspace:FindFirstChild("Zombies_Local")
+                if zombiesLocal then
+                    for _, zombie in ipairs(zombiesLocal:GetChildren()) do
+                        pcall(function()
+                            local root = zombie:FindFirstChild("HumanoidRootPart")
+                            local healthBar = root and root:FindFirstChild("HealthBar")
+                            local label = healthBar and healthBar:FindFirstChild("Label")
+                            if label then
+                                label.Text = "ZOMBIE"
+                            end
+                        end)
+                    end
+                end
+            end)
+        end
+    end
+})
+
+tabESP:Slider({
+    Title = "Max Distance (studs)",
+    Step = 10,
+    Value = { Min = 20, Max = 500, Default = 200 },
+    Callback = function(val)
+        options.ESPMaxDistance.Value = val
+    end
+})
+
+tabESP:Section({ Title = "Player ESP" })
+local playerHighlights = {}
+tabESP:Toggle({
+    Title = "Player Highlights",
+    Value = false,
+    Callback = function(val)
+        if val then
+            for _, player in ipairs(Players:GetPlayers()) do
+                if player ~= localPlayer and player.Character then
+                    local hl = Instance.new("Highlight")
+                    hl.FillColor = Color3.fromRGB(0, 200, 255)
+                    hl.OutlineColor = Color3.fromRGB(255, 255, 255)
+                    hl.FillTransparency = 0.5
+                    hl.Parent = player.Character
+                    playerHighlights[player.Name] = hl
+                end
+            end
+        else
+            for name, hl in pairs(playerHighlights) do
+                pcall(function() hl:Destroy() end)
+            end
+            playerHighlights = {}
+        end
+    end
+})
+
+-- Наполнение вкладки "Gears"
+tabGears:Section({ Title = "Gears" })
+tabGears:Dropdown({
+    Title = "Select Gears",
+    Values = ZombieArenaModule.GEARS or { "Landmine" },
+    Value = { "Landmine" },
+    Multi = true,
+    Callback = function(val)
+        options.GearBuySelect.Value = val
+    end
+})
+
+toggles.AutoBuyGear._windElem = tabGears:Toggle({
+    Title = "Auto-Purchase",
+    Value = false,
+    Callback = function(val)
+        toggles.AutoBuyGear.Value = val
+        if val then
+            ZombieArenaModule.startAutoBuy()
+        else
+            ZombieArenaModule.stopAutoBuy()
+        end
+    end
+})
+
+tabGears:Slider({
+    Title = "Purchase Delay (s)",
+    Step = 0.1,
+    Value = { Min = 0.1, Max = 5, Default = 0.5 },
+    Callback = function(val)
+        options.GearBuyDelay.Value = val
+    end
+})
+
+-- Наполнение вкладки "Immortal"
+tabImmortal:Section({ Title = "Immortal" })
+toggles.InvisEnabled._windElem = tabImmortal:Toggle({
+    Title = "Immortal",
+    Value = false,
+    Callback = function(val)
+        toggles.InvisEnabled.Value = val
+        if val then
+            ZombieArenaModule.setInvisTransparency(options.InvisTransparency.Value / 100)
+            ZombieArenaModule.enableInvisibility()
+        else
+            ZombieArenaModule.disableInvisibility()
+        end
+    end
+})
+
+tabImmortal:Slider({
+    Title = "Transparency",
+    Step = 1,
+    Value = { Min = 0, Max = 100, Default = 0 },
+    Callback = function(val)
+        options.InvisTransparency.Value = val
+        ZombieArenaModule.setInvisTransparency(val / 100)
+    end
+})
+
+tabImmortal:Keybind({
+    Title = "Toggle Keybind",
+    Value = "Z",
+    Callback = function(keyName)
+        pcall(function()
+            invisToggleKey = Enum.KeyCode[keyName]
+        end)
+    end
+})
+
+-- Наполнение вкладки "Upgrades"
+tabUpgrades:Section({ Title = "Weapon" })
+toggles.AutoWeaponUpgrade._windElem = tabUpgrades:Toggle({
+    Title = "Auto Weapon Upgrade",
+    Value = false,
+    Callback = function(val)
+        toggles.AutoWeaponUpgrade.Value = val
+        if val then
+            ZombieArenaModule.startWeaponUpgrade()
+        else
+            ZombieArenaModule.stopWeaponUpgrade()
+        end
+    end
+})
+
+tabUpgrades:Slider({
+    Title = "Delay (s)",
+    Step = 0.1,
+    Value = { Min = 0.1, Max = 5, Default = 0.5 },
+    Callback = function(val)
+        options.WeaponUpgradeDelay.Value = val
+    end
+})
+
+tabUpgrades:Section({ Title = "Health" })
+toggles.AutoHealthUpgrade._windElem = tabUpgrades:Toggle({
+    Title = "Auto Health Upgrade",
+    Value = false,
+    Callback = function(val)
+        toggles.AutoHealthUpgrade.Value = val
+        if val then
+            ZombieArenaModule.startHealthUpgrade()
+        else
+            ZombieArenaModule.stopHealthUpgrade()
+        end
+    end
+})
+
+tabUpgrades:Slider({
+    Title = "Delay (s)",
+    Step = 0.1,
+    Value = { Min = 0.1, Max = 5, Default = 0.5 },
+    Callback = function(val)
+        options.HealthUpgradeDelay.Value = val
+    end
+})
+
+-- Наполнение вкладки "Wave"
+tabWave:Section({ Title = "Skip" })
+toggles.AutoSkipWave._windElem = tabWave:Toggle({
+    Title = "Auto Skip Vote",
+    Value = false,
+    Callback = function(val)
+        toggles.AutoSkipWave.Value = val
+        if val then
+            ZombieArenaModule.startSkip()
+        else
+            ZombieArenaModule.stopSkip()
+        end
+    end
+})
+
+tabWave:Button({
+    Title = "Instantly Skip Waves Now",
+    Callback = function()
+        ZombieArenaModule.instantSkip()
+        if not toggles.EnableFly.Value then
+            toggles.EnableFly:Set(true)
+        end
+    end
+})
+
+tabWave:Button({
+    Title = "Vote Skip (Direct Remote)",
+    Callback = function()
+        if waveRemotes and waveRemotes:FindFirstChild("SkipVote") then
+            pcall(function() waveRemotes.SkipVote:FireServer(true) end)
+        end
+    end
+})
+
+tabWave:Section({ Title = "Credits" })
+toggles.AutoDoubleCredits._windElem = tabWave:Toggle({
+    Title = "Auto Double Credits",
+    Value = false,
+    Callback = function(val)
+        toggles.AutoDoubleCredits.Value = val
+    end
+})
+
+tabWave:Button({
+    Title = "Vote Double Credits",
+    Callback = function()
+        local voteRemote = waveRemotes and waveRemotes:FindFirstChild("DoubleCreditsVote")
+        if voteRemote then
+            pcall(function() voteRemote:FireServer(true) end)
+        end
+    end
+})
+
+tabWave:Section({ Title = "Shards" })
+toggles.AutoCollectShards._windElem = tabWave:Toggle({
+    Title = "Auto Collect Galactic Shards",
+    Value = false,
+    Callback = function(val)
+        toggles.AutoCollectShards.Value = val
+        if val then
+            task.spawn(function()
+                local targetColor = Color3.fromRGB(170, 0, 255)
+                while toggles.AutoCollectShards.Value do
+                    pcall(function()
+                        local char = localPlayer.Character
+                        local root = char and char:FindFirstChild("HumanoidRootPart")
+                        if root then
+                            for _, part in ipairs(workspace:GetDescendants()) do
+                                if not toggles.AutoCollectShards.Value then return end
+                                if part:IsA("BasePart") and not part.Anchored then
+                                    local colorMatch = math.abs(part.Color.R - targetColor.R) + math.abs(part.Color.G - targetColor.G) + math.abs(part.Color.B - targetColor.B) < 0.1
+                                    if colorMatch then
+                                        local dist = (root.Position - part.Position).Magnitude
+                                        if dist < 80 then
+                                            root.CFrame = CFrame.new(part.Position + Vector3.new(0, 3, 0))
+                                            task.wait(0.05)
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end)
+                    task.wait(1)
+                end
+            end)
+        end
+    end
+})
+
+-- Наполнение вкладки "Misc"
+tabMisc:Section({ Title = "Movement" })
+toggles.AntiAFK._windElem = tabMisc:Toggle({
+    Title = "Anti AFK",
+    Value = false,
+    Callback = function(val)
+        toggles.AntiAFK.Value = val
+        if val then ZombieArenaModule.enableAntiAFK() end
+    end
+})
+
+toggles.Noclip._windElem = tabMisc:Toggle({
+    Title = "Noclip",
+    Value = false,
+    Callback = function(val)
+        toggles.Noclip.Value = val
+        if val then ZombieArenaModule.startNoclip() else ZombieArenaModule.stopNoclip() end
+    end
+})
+
+tabMisc:Slider({
+    Title = "Walk Speed",
+    Step = 1,
+    Value = { Min = 16, Max = 150, Default = 16 },
+    Callback = function(val)
+        options.WalkSpeed.Value = val
+        ZombieArenaModule.setWalkSpeed(val)
+    end
+})
+
+toggles.EnableFly._windElem = tabMisc:Toggle({
+    Title = "Fly",
+    Value = false,
+    Callback = function(val)
+        toggles.EnableFly.Value = val
+        if val then ZombieArenaModule.startFly() else ZombieArenaModule.stopFly() end
+    end
+})
+
+tabMisc:Slider({
+    Title = "Fly Height",
+    Step = 1,
+    Value = { Min = 0, Max = 150, Default = 0 },
+    Callback = function(val)
+        options.FlyHeight.Value = val
+    end
+})
+
+tabMisc:Slider({
+    Title = "Jump Power",
+    Step = 1,
+    Value = { Min = 7, Max = 150, Default = 7 },
+    Callback = function(val)
+        options.JumpPower.Value = val
+        local char = localPlayer.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum.JumpHeight = val
+        end
+    end
+})
+
+toggles.InfiniteJump._windElem = tabMisc:Toggle({
+    Title = "Infinite Jump",
+    Value = false,
+    Callback = function(val)
+        toggles.InfiniteJump.Value = val
+    end
+})
+
+tabMisc:Section({ Title = "Visual" })
+tabMisc:Slider({
+    Title = "FOV",
+    Step = 1,
+    Value = { Min = 40, Max = 120, Default = 70 },
+    Callback = function(val)
+        pcall(function()
+            workspace.CurrentCamera.FieldOfView = val
+        end)
+    end
+})
+
+toggles.Fullbright._windElem = tabMisc:Toggle({
+    Title = "Fullbright",
+    Value = false,
+    Callback = function(val)
+        toggles.Fullbright.Value = val
+        if val then
+            Lighting.Brightness = 2
+            Lighting.Ambient = Color3.fromRGB(178, 178, 178)
+            Lighting.OutdoorAmbient = Color3.fromRGB(178, 178, 178)
+            Lighting.FogEnd = 100000
+            for _, effect in ipairs(Lighting:GetChildren()) do
+                if effect:IsA("BlurEffect") then effect.Enabled = false end
+            end
+        else
+            Lighting.Brightness = originalLighting.Brightness
+            Lighting.Ambient = originalLighting.Ambient
+            Lighting.OutdoorAmbient = originalLighting.OutdoorAmbient
+            Lighting.FogEnd = originalLighting.FogEnd
+            for _, effect in ipairs(Lighting:GetChildren()) do
+                if effect:IsA("BlurEffect") then effect.Enabled = true end
+            end
+        end
+    end
+})
+
+tabMisc:Slider({
+    Title = "Time of Day",
+    Step = 0.5,
+    Value = { Min = 0, Max = 24, Default = 14 },
+    Callback = function(val)
+        pcall(function() Lighting.ClockTime = val end)
+    end
+})
+
+tabMisc:Section({ Title = "Other" })
+tabMisc:Button({
+    Title = "Unload",
+    Callback = function()
+        cleanEffectsAndCheat()
+        pcall(function() Window:Destroy() end)
+    end
+})
+
+-- Наполнение вкладки "Info" (Статистика)
+tabInfo:Section({ Title = "Stats" })
+local pZombies = tabInfo:Paragraph({ Title = "Zombies: 0" })
+local pEstCredits = tabInfo:Paragraph({ Title = "Est. Credits: 0" })
+local pSession = tabInfo:Paragraph({ Title = "Session: 0" })
+local pWave = tabInfo:Paragraph({ Title = "Wave: --" })
+local pHealth = tabInfo:Paragraph({ Title = "Health: -- / --" })
+local pFPS = tabInfo:Paragraph({ Title = "FPS: --" })
+local pCredits = tabInfo:Paragraph({ Title = "Credits: --" })
+
+-- Регулярное обновление значений статистики на панели
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        pcall(function()
+            pZombies:SetTitle("Zombies: " .. tostring(ZombieArenaModule.getZombieCount()))
+            pEstCredits:SetTitle("Est. Credits: " .. tostring(ZombieArenaModule.getEstCredits()))
+            pSession:SetTitle("Session: " .. tostring(ZombieArenaModule.getSessionTotal()))
+            pWave:SetTitle("Wave: " .. getCurrentWave())
+            
+            local humInfo = "-- / --"
+            local char = localPlayer.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            if hum then
+                humInfo = math.floor(hum.Health) .. " / " .. math.floor(hum.MaxHealth)
+            end
+            pHealth:SetTitle("Health: " .. humInfo)
+            pFPS:SetTitle("FPS: " .. tostring(getAverageFPS()))
+
+            local credInfo = "--"
+            local leaderstats = localPlayer:FindFirstChild("leaderstats")
+            if leaderstats then
+                local cred = leaderstats:FindFirstChild("Credits") or leaderstats:FindFirstChild("Minerals") or leaderstats:FindFirstChild("Cash")
+                if cred then credInfo = tostring(cred.Value) end
+            end
+            pCredits:SetTitle("Credits: " .. credInfo)
+            
+            ZombieArenaModule.updateESP()
+        end)
+    end
+end)
+
+-- Наполнение вкладки "Queue" (Настройка авто-очереди)
+local queueRemotes = ReplicatedStorage:FindFirstChild("QueueRemotes")
+local queueSettings = {
+    difficulty = "Normal",
+    partySize = 1,
+    map = "RooftopSiege",
+    autoOn = false,
+    hookConn = nil,
+    updateConn = nil
+}
+
+local function teleportToClosestQueue()
+    local queues = workspace:FindFirstChild("Queues")
+    local char = localPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if queues and root then
+        local closest = nil
+        local minDist = math.huge
+        for _, q in ipairs(queues:GetChildren()) do
+            local pad = q:FindFirstChild("BillboardPart") or q:FindFirstChildWhichIsA("BasePart")
+            if pad then
+                local d = (root.Position - pad.Position).Magnitude
+                if d < minDist then
+                    minDist = d
+                    closest = pad
+                end
+            end
+        end
+        if closest then
+            root.CFrame = CFrame.new(closest.Position + Vector3.new(0, 3, 0))
+        end
+    end
+end
+
+local function requestQueueJoin()
+    if queueRemotes and queueRemotes:FindFirstChild("CreateParty") then
+        pcall(function()
+            queueRemotes.CreateParty:FireServer(queueSettings.partySize, queueSettings.difficulty, queueSettings.map)
+        end)
+    end
+end
+
+tabQueue:Section({ Title = "Settings" })
+tabQueue:Dropdown({
+    Title = "Difficulty",
+    Values = { "Normal", "Hardcore", "Nightmare" },
+    Value = "Normal",
+    Multi = false,
+    Callback = function(val)
+        queueSettings.difficulty = val or "Normal"
+    end
+})
+
+tabQueue:Dropdown({
+    Title = "Map",
+    Values = { "RooftopSiege", "Atlantis" },
+    Value = "RooftopSiege",
+    Multi = false,
+    Callback = function(val)
+        queueSettings.map = val or "RooftopSiege"
+    end
+})
+
+tabQueue:Slider({
+    Title = "Party Size",
+    Step = 1,
+    Value = { Min = 1, Max = 4, Default = 1 },
+    Callback = function(val)
+        queueSettings.partySize = val
+    end
+})
+
+tabQueue:Section({ Title = "Auto" })
+tabQueue:Toggle({
+    Title = "Full Auto Queue",
+    Value = false,
+    Callback = function(val)
+        queueSettings.autoOn = val
+        if val then
+            if queueRemotes then
+                local showUI = queueRemotes:FindFirstChild("ShowPartySizeUI")
+                if showUI then
+                    if queueSettings.hookConn then queueSettings.hookConn:Disconnect() end
+                    queueSettings.hookConn = showUI.OnClientEvent:Connect(function(eventState)
+                        if not eventState or not queueSettings.autoOn then return end
+                        task.wait(0.1)
+                        requestQueueJoin()
+                    end)
+                end
+                local updateQ = queueRemotes:FindFirstChild("QueueUpdate")
+                if updateQ then
+                    if queueSettings.updateConn then queueSettings.updateConn:Disconnect() end
+                    queueSettings.updateConn = updateQ.OnClientEvent:Connect(function(updateData)
+                        if not queueSettings.autoOn then return end
+                        local action = type(updateData) == "table" and updateData.Action
+                        if action == "Left" or action == "TeleportFailed" then
+                            task.wait(3)
+                            teleportToClosestQueue()
+                        end
+                    end)
+                end
+            end
+            teleportToClosestQueue()
+        else
+            if queueSettings.hookConn then queueSettings.hookConn:Disconnect(); queueSettings.hookConn = nil end
+            if queueSettings.updateConn then queueSettings.updateConn:Disconnect(); queueSettings.updateConn = nil end
+            pcall(function()
+                if queueRemotes and queueRemotes:FindFirstChild("LeaveQueue") then
+                    queueRemotes.LeaveQueue:FireServer()
+                end
+            end)
+        end
+    end
+})
+
+tabQueue:Section({ Title = "Manual" })
+tabQueue:Button({
+    Title = "Queue Now",
+    Callback = function()
+        teleportToClosestQueue()
+        task.wait(1)
+        requestQueueJoin()
+    end
+})
+
+tabQueue:Button({
+    Title = "Leave Queue",
+    Callback = function()
+        pcall(function()
+            if queueRemotes and queueRemotes:FindFirstChild("LeaveQueue") then
+                queueRemotes.LeaveQueue:FireServer()
+            end
+        end)
+    end
+})
+
+-- Наполнение вкладки "Config"
+local configManager = Window.ConfigManager
+tabConfig:Section({ Title = "Save Config" })
+local selectedConfigName = "Default"
+
+tabConfig:Input({
+    Title = "Config Name",
+    Placeholder = "Enter config name",
+    Callback = function(val)
+        selectedConfigName = (val and val ~= "") and val or "Default"
+    end
+})
+
+tabConfig:Button({
+    Title = "Save Config",
+    Callback = function()
+        local cfg = configManager:CreateConfig(selectedConfigName)
+        cfg:Save()
+        WindUI:Notify({ Title = "Saved!", Content = "Config \"" .. selectedConfigName .. "\" saved.", Duration = 3, Image = "check-circle" })
+    end
+})
+
+tabConfig:Section({ Title = "Load Config" })
+local function getConfigsList()
+    local list = {}
+    local success, rawList = pcall(function() return configManager:AllConfigs() end)
+    if success and type(rawList) == "table" then
+        for _, name in ipairs(rawList) do
+            table.insert(list, name)
+        end
+    end
+    if #list == 0 then table.insert(list, "Default") end
+    return list
+end
+
+local loadedConfigTarget = "Default"
+local dropdownConfigElem = nil
+
+dropdownConfigElem = tabConfig:Dropdown({
+    Title = "Select Config",
+    Values = getConfigsList(),
+    Multi = false,
+    Callback = function(val)
+        loadedConfigTarget = val or "Default"
+    end
+})
+
+tabConfig:Button({
+    Title = "Refresh List",
+    Callback = function()
+        if dropdownConfigElem then
+            dropdownConfigElem:Refresh(getConfigsList())
+        end
+        WindUI:Notify({ Title = "Refreshed", Content = "Config list updated.", Duration = 2, Image = "refresh-cw" })
+    end
+})
+
+tabConfig:Button({
+    Title = "Load Config",
+    Callback = function()
+        if loadedConfigTarget and loadedConfigTarget ~= "" then
+            local cfg = configManager:CreateConfig(loadedConfigTarget)
+            cfg:Load()
+            WindUI:Notify({ Title = "Loaded!", Content = "Config \"" .. loadedConfigTarget .. "\" loaded.", Duration = 3, Image = "check-circle" })
+        end
+    end
+})
+
+tabConfig:Section({ Title = "Manage" })
+local configToDeleteName = ""
+tabConfig:Input({
+    Title = "Config Name to Delete",
+    Placeholder = "Enter config name",
+    Callback = function(val)
+        configToDeleteName = val or ""
+    end
+})
+
+tabConfig:Button({
+    Title = "Delete Config",
+    Callback = function()
+        if configToDeleteName and configToDeleteName ~= "" then
+            local cfg = configManager:CreateConfig(configToDeleteName)
+            cfg:Delete()
+            WindUI:Notify({ Title = "Deleted", Content = "Config \"" .. configToDeleteName .. "\" deleted.", Duration = 3, Image = "trash-2" })
+            if dropdownConfigElem then
+                dropdownConfigElem:Refresh(getConfigsList())
+            end
+        end
+    end
+})
